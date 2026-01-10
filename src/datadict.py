@@ -1,6 +1,6 @@
 import pandas as pd
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum
 import re
 from datetime import datetime
@@ -15,17 +15,28 @@ class FieldType(str, Enum):
     NOTES = "notes"
     DESCRIPTIVE = "descriptive"
 
+class ValidationType(str, Enum):
+    INTEGER = "integer"
+    NUMBER = "number"
+    NUMBER_1DP = "number_1dp"
+    NUMBER_2DP = "number_2dp"
+    DATE_DMY = "date_dmy"
+    DATETIME_DMY = "datetime_dmy"
+    TIME = "time"
+    ALPHA_ONLY = "alpha_only"
+
 class DataDictionaryField(BaseModel):
     field_name: str
     form_name: str
     field_type: FieldType
+    field_label: Optional[str]
     choices: Optional[Dict[str, int]]
     calculation: Optional[str]
-    validation_type: Optional[str]
+    validation_type: Optional[ValidationType]
     validation_minimum: Optional[str | int | float]
     validation_maximum: Optional[str | int | float]
     identifier: Optional[bool]
-    branching_logic: Optional[str]
+    branching_logic: Optional[List[Dict[str, Any]]]
     required_field: Optional[bool]
 
 class DataDictionary(BaseModel):
@@ -54,15 +65,16 @@ class DataDictionary(BaseModel):
             field = DataDictionaryField(
                 field_name=row.get(field_name_col),
                 form_name=row.get(find_col(r'.*form.*name')),
+                field_label=row.get(find_col(r'.*field.*label')),
                 field_type=row.get(find_col(r'.*field.*type')),
                 choices=cls._parse_choices(row.get(find_col(r'.*choices.*calculations.*slider'))),
                 calculation=cls._parse_calculation(row.get(find_col(r'.*choices.*calculations.*slider'))),
                 validation_type=cls._parse_validataion_type(row.get(find_col(r'.*validation.*type.*slider'))),
                 validation_minimum=cls._parse_validation_limit(row.get(find_col(r'.*validation.*min'))),
                 validation_maximum=cls._parse_validation_limit(row.get(find_col(r'.*validation.*max'))),
-                identifier=row.get(find_col(r'.*identifier')) == "y",
-                branching_logic=row.get(find_col(r'.*branching.*logic')),
-                required_field=row.get(find_col(r'.*required.*field')) == "y",
+                identifier=row.get(find_col(r'.*identifier')) == "y", # "y" indicates true
+                branching_logic=cls._parse_branching_logic(row.get(find_col(r'.*branching.*logic'))),
+                required_field=row.get(find_col(r'.*required.*field')) == "y", # "y" indicates true
             )
             fields.append(field)
         return cls(fields=fields)
@@ -123,8 +135,50 @@ class DataDictionary(BaseModel):
             return None
     
     @staticmethod
-    # to be implemented next
+    # Parses validation type from string to ValidationType enum
     def _parse_validataion_type(val_type_str: str) -> Optional[str]:
-        return val_type_str or None
+        if pd.isna(val_type_str) or not str(val_type_str).strip():
+            return None
+        val_type_str = val_type_str.strip().lower()
+        mapping = {
+            "integer": ValidationType.INTEGER,
+            "number": ValidationType.NUMBER,
+            "number_1dp": ValidationType.NUMBER_1DP,
+            "number_2dp": ValidationType.NUMBER_2DP,
+            "date_dmy": ValidationType.DATE_DMY,
+            "datetime_dmy": ValidationType.DATETIME_DMY,
+            "time": ValidationType.TIME,
+            "alpha_only": ValidationType.ALPHA_ONLY,
+        }
+        return mapping.get(val_type_str, None)
     
-    
+
+    @staticmethod
+    # Parses branching logic into a list of condition dictionaries
+    def _parse_branching_logic(logic_str: str) -> Optional[List[Dict[str, Any]]]:
+        if pd.isna(logic_str) or not str(logic_str).strip():
+            return None
+        
+        logic_str = str(logic_str).strip()
+        conditions = []
+        
+        # Match: [field_name] operator 'value' or [field_name(123)] >= value
+        # Operators: =, <, >, <=, >=, <>
+        pattern = r"\[([a-zA-Z_][a-zA-Z0-9_]*(?:\(\d+\))?)\]\s*([=<>!]+)\s*['\"]?([^'\"<>=\[\]]+)['\"]?"
+        
+        for match in re.finditer(pattern, logic_str):
+            field_name, operator, value = match.groups()
+            value = value.strip()
+            
+            try:
+                value = int(value)
+            except ValueError:
+                pass
+            
+            conditions.append({
+                "field": field_name,
+                "operator": operator,
+                "value": value
+            })
+        
+        return conditions or None
