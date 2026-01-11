@@ -91,34 +91,40 @@ version: "1.0"
 name: "Vitals Template"
 datadict_hash: "abc123..."  # For validation
 arm: "arm_1"                 # Optional: fixed arm or null for runtime selection
-overwrite_strategy: "merge"  # merge | replace
 
-key_mapping:
-  record_id: patient_id_column
-  redcap_event_name: event_column  # Or fixed value
+record_id_column: "patient_id"  # Column name for patient/record ID
 
-parameter_mapping:
-  rr_sys:
-    source: rr_systolisch
-    time_interval: 1h           # null | 1h | 2h | 4h | 6h | 8h | 12h | 24h
-    reference: calendar_day     # calendar_day | from_timepoint
-    reference_column: null      # Required if from_timepoint
-    aggregation: mean           # first | last | mean | min | max | median | mode | sum | nearest
-    outlier_filter: null        # null | 2.5 | 5 | 10 (percentile)
+fields:
+  - field_name: "rr_sys"
+    event_name: "baseline_arm_1"        # or column name
+    repeat_instrument: "vitals"         # for repeating forms
+    repeat_instance: "vital_instance"   # column name for instance number
+    source:
+      query_string: "parameter == 'rr_sys'"
+      query_value: "value"
+      timestamp: "ts"
+    time_interval: 1                    # hours (flexible: 1, 2, 4, 6, 8, 12, 24, etc.)
+    reference: calendar_day             # calendar_day | from_timepoint
+    reference_column: null              # required if from_timepoint
+    aggregation: mean                   # first | last | mean | min | max | median | mode | sum | nearest
+    outlier_filter: null                # null | 2.5 | 5 | 10 (percentile)
   
-  nora_dosis:
-    type: calculated
-    formula: "({laufrate_ml_h} / {gewicht_kg} / 60) * {konz_mg_ml} * 1000"
-    source_params: [laufrate_ml_h, gewicht_kg, konz_mg_ml]
+  - field_name: "norad_dose"
+    source:
+      query_string: "parameter == 'norad_rate'"
+      query_value: "value"
+      timestamp: "ts"
+    calculation_expr: "({rate} / {kg} / 60) * {conc} * 1000"
+    calc_vars:
+      rate:
+        query_string: "parameter == 'norad_rate'"
+        query_value: "value"
+        timestamp: "ts"
+      kg:
+        constant: "75"
+      conc:
+        constant: "2.0"
     aggregation: mean
-  
-  geschlecht:
-    source: sex
-    choice_mapping:
-      "m": 1
-      "männlich": 1
-      "w": 2
-      "weiblich": 2
 ```
 
 ---
