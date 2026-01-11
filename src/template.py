@@ -1,10 +1,11 @@
 import yaml
+import json
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from enum import Enum
 from pathlib import Path
 
-from .datadict import DataDictionaryField, DataDictionary
+from .datadict import DataDictionaryField, DataDictionary, ValidationType, FieldType
 
 # Simplified mapping: store semantic selectors and key columns directly
 
@@ -40,6 +41,20 @@ class TemplateField(DataDictionaryField):
     Extends DataDictionaryField with mapping logic for data processing.
     Contains both REDCap metadata and source data mapping information.
     """
+    # Make inherited fields optional (can be None when creating template)
+    field_name: str  # Keep this required
+    form_name: Optional[str] = None
+    field_type: Optional[FieldType] = None
+    field_label: Optional[str] = None
+    choices: Optional[Dict[str, int]] = None
+    calculation: Optional[str] = None
+    validation_type: Optional[ValidationType] = None
+    validation_minimum: Optional[str | int | float] = None
+    validation_maximum: Optional[str | int | float] = None
+    identifier: Optional[bool] = None
+    branching_logic: Optional[List[Dict[str, Any]]] = None
+    required_field: Optional[bool] = None
+    
     visible: Optional[bool] = True  # Whether to include this field in the aggregated output
 
     # REDCap structure (field-specific)
@@ -84,14 +99,18 @@ class Template(BaseModel):
         """Load template from YAML file"""
         with open(file_path, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f)
+        # Pydantic handles enum reconstruction from string values automatically
         return cls(**data)
     
     def to_yaml(self, file_path: str) -> None:
         """Save template to YAML file"""
         Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+        # Convert through JSON to ensure enums are serialized as strings
+        json_str = self.model_dump_json(exclude_none=True)
+        data = json.loads(json_str)
         with open(file_path, 'w', encoding='utf-8') as f:
             yaml.dump(
-                self.model_dump(exclude_none=True, mode='python'),
+                data,
                 f,
                 default_flow_style=False,
                 allow_unicode=True,
