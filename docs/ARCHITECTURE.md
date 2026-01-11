@@ -8,6 +8,7 @@
 A desktop tool (Flet UI) to transform clinical time-series data (CSV, long format) into REDCap-compatible import files.
 
 **Two-phase workflow:**
+
 1. **Template Builder** – Create a reusable mapping template (DataDict → source columns, aggregation, calculations)
 2. **Data Processor** – Apply template to a dataset and export REDCap-ready CSV
 
@@ -27,10 +28,9 @@ redcap-import-tool/
 │   ├── logger.py           # Logging setup (console + file)
 │   ├── datadict.py         # Parse REDCap DataDict CSV
 │   ├── template.py         # Load/save/validate YAML templates (Pydantic)
-│   ├── aggregation.py      # Time-based aggregation engine
-│   ├── calculation.py      # Safe expression evaluator (simpleeval)
+│   ├── transform.py        # Query, Calculation, Aggregation, Export (single pipeline)
+│   ├── calculation.py      # Safe expression evaluator (simpleeval), helper for transform.py
 │   ├── validation.py       # Data type & value validation
-│   ├── export.py           # Generate REDCap CSV
 │   └── utils.py            # Date parsing, converters, helpers
 │
 ├── ui/                     # Flet UI components
@@ -43,20 +43,18 @@ redcap-import-tool/
 ├── tests/                  # pytest unit tests
 │   ├── test_datadict.py
 │   ├── test_template.py
-│   ├── test_aggregation.py
+│   ├── test_transform.py
 │   ├── test_calculation.py
-│   ├── test_export.py
 │   └── test_validation.py
 │
 ├── notebooks/              # Interactive development & testing
 │   ├── 01_datadict_exploration.ipynb
-│   ├── 02_aggregation_testing.ipynb
+│   ├── 02_transform_testing.ipynb
 │   ├── 03_export_validation.ipynb
 │   └── 04_end_to_end_test.ipynb
 │
 ├── templates/              # Example YAML templates
-│   ├── vitals_template.yaml
-│   └── ecmo_template.yaml
+│   ├── example_template.yaml
 │
 ├── data/                   # Git-ignored, local test data
 │   ├── input/
@@ -75,61 +73,122 @@ redcap-import-tool/
 |--------|----------|
 | `datadict.py` | Parse REDCap DataDict CSV; extract field types, choice codes, required fields, date formats, checkbox columns, key columns (record_id, redcap_event_name, etc.) |
 | `template.py` | Pydantic models for YAML template schema; load/save/validate templates |
-| `aggregation.py` | Group data by time intervals (1h–24h); support calendar-day and from-timepoint references; methods: first, last, mean, min, max, median, mode, sum, nearest |
-| `calculation.py` | Evaluate Python-like expressions safely via `simpleeval`; variable syntax `{var}` → `row['var']`; handle NULL values |
+| `transform.py` | **Single pipeline:** Query source data → apply calculations (per row) → aggregate by time intervals → pivot to wide → add REDCap identifiers → export CSV. Handles field dependencies via retry-loop. |
+| `calculation.py` | Evaluate Python-like expressions safely via `simpleeval`; variable syntax `{var}` → `row['var']`; handle NULL values. Used as helper by `transform.py`. |
 | `validation.py` | Validate data types (int, float, date, text), value ranges, choice codes, date formats, required fields |
-| `export.py` | Generate REDCap CSV with correct key columns; auto-set `redcap_repeat_instrument`; number `redcap_repeat_instance` per patient starting at 1; convert dates to DD/MM/YYYY (Australian format) |
 | `utils.py` | Flexible date parser, type converters, string cleaners, user-friendly error messages |
 
 ---
 
-## 4. Template Schema (YAML)
+## 4. Transform Pipeline (Single Step)
+
+**Data Flow:**
+
+```
+Source Data (long) + Template
+        │
+        ▼
+┌─────────────────────────────────┐
+│  transform.py                   │
+│                                 │
+│  1. Query: Execute query_string │
+│  2. Calc: Resolve calc_vars     │
+│     - query → fetch from source │
+│     - constant → literal value  │
+│     - {field} → resolved field  │
+│  3. Calc: Apply calculation_expr│
+│  4. Retry-Loop for dependencies │
+│  5. Aggregate by time interval  │
+│  6. Pivot: long → wide          │
+│  7. Add REDCap identifiers      │
+│  8. Format & Export CSV         │
+└─────────────────────────────────┘
+        │
+        ▼
+   REDCap-CSV (wide)
+```
+
+**Field Reference Resolution:**
+
+- Variables in `calc_vars` can be queries OR references to already-processed fields
+- Reference syntax: `{field_name}` (detected via regex `^\{[\w]+\}$`)
+- Retry-loop (max 3 passes) resolves dependencies automatically
+
+---
+
+## 5. Template Schema (YAML)
 
 ```yaml
 # Example: templates/vitals_template.yaml
 version: "1.0"
 name: "Vitals Template"
-datadict_hash: "abc123..."  # For validation
-arm: "arm_1"                 # Optional: fixed arm or null for runtime selection
-
-record_id_column: "patient_id"  # Column name for patient/record ID
+datadict_hash: "abc123..."       # For validation against DataDict changes
+arm: "arm_1"                     # Optional: fixed arm or null for runtime selection
+record_id_column: "patient_id"   # Column name in source data for patient/record ID
 
 fields:
+  # Simple field with aggregation
   - field_name: "rr_sys"
-    event_name: "baseline_arm_1"        # or column name
-    repeat_instrument: "vitals"         # for repeating forms
-    repeat_instance: "vital_instance"   # column name for instance number
+    event_name: "baseline_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "vital_instance"
     source:
       query_string: "parameter == 'rr_sys'"
       query_value: "value"
       timestamp: "ts"
-    time_interval: 1                    # hours (flexible: 1, 2, 4, 6, 8, 12, 24, etc.)
-    reference: calendar_day             # calendar_day | from_timepoint
-    reference_column: null              # required if from_timepoint
-    aggregation: mean                   # first | last | mean | min | max | median | mode | sum | nearest
-    outlier_filter: null                # null | 2.5 | 5 | 10 (percentile)
-  
+      time_interval: 1              # hours (flexible: 1, 2, 4, 6, 8, 12, 24, etc.)
+      reference: calendar_day       # calendar_day | from_timepoint
+      reference_column: null        # required if from_timepoint
+      aggregation: mean
+      outlier_filter: null          # null | 2.5 | 5 | 10 (percentile)
+
+  # Field with calculation and field reference
   - field_name: "norad_dose"
     source:
       query_string: "parameter == 'norad_rate'"
       query_value: "value"
       timestamp: "ts"
-    calculation_expr: "({rate} / {kg} / 60) * {conc} * 1000"
-    calc_vars:
-      rate:
-        query_string: "parameter == 'norad_rate'"
-        query_value: "value"
-        timestamp: "ts"
-      kg:
-        constant: "75"
-      conc:
-        constant: "2.0"
-    aggregation: mean
+      calculation_expr: "({rate} / {kg} / 60) * {conc} * 1000"
+      calc_vars:
+        rate:
+          query_string: "parameter == 'norad_rate'"
+          query_value: "value"
+        kg:
+          constant: "{weight}"      # Reference to already-processed 'weight' field
+        conc:
+          constant: "0.1"           # Literal constant
+      aggregation: mean
+
+  # Yes/No field using 'any' aggregation
+  - field_name: "antiplatelet_given"
+    source:
+      query_string: "medikament IN ('ASS', 'Clopidogrel', 'Ticagrelor')"
+      query_value: "value"
+      timestamp: "ts"
+      aggregation: any              # 1 if ≥1 match, else 0
+      time_interval: 24
+```
+
+- field_name: "antiplatelet_given"
+    
+    source:
+    
+    query_string: "medikament IN ('ASS', 'Clopidogrel', 'Ticagrelor')"
+    
+    query_value: "value"
+    
+    timestamp: "ts"
+    
+    aggregation: any              # 1 if ≥1 match, else 0
+    
+    time_interval: 24
+    
+
 ```
 
 ---
 
-## 5. REDCap Key Columns
+## 6. REDCap Key Columns
 
 | Column | Description |
 |--------|-------------|
@@ -138,7 +197,7 @@ fields:
 | `redcap_repeat_instrument` | Instrument name for repeating forms |
 | `redcap_repeat_instance` | Instance number (starts at 1 per patient per instrument) |
 
-## 6. Aggregation Reference
+## 7. Aggregation Reference
 
 | Method | Use Case |
 |--------|-----------|
@@ -150,17 +209,20 @@ fields:
 | `mode` | Most frequent (categorical data) |
 | `sum` | Cumulative (volumes, doses over time) |
 | `nearest` | Closest to reference timepoint (from_timepoint only) |
+| `any` | Returns 1 if ≥1 row exists after query, else 0 (for yes/no questions) |
+| `count` | Number of rows matching query |
 
 **Reference modes:**
+
 - `calendar_day`: Aggregate by calendar day (00:00–23:59)
 - `from_timepoint`: Aggregate relative to event (e.g., ECMO start, ICU admission)
 
 ---
 
-## 7. Calculation Syntax
+## 8. Calculation Syntax
 
 ```python
-# Variables: {column_name}
+# Variables: {column_name} or {field_name} (for resolved fields)
 # Arithmetic: + - * /
 # Comparison: == != > < >= <=
 # Logic: and or not
@@ -170,13 +232,17 @@ fields:
 {laufrate_ml_h} / {gewicht_kg} / 60 * 1000
 1 if {vasopressor_dose} > 0 else 0
 {'P1': 0, 'P2': 1, 'P3': 2}.get({impella_level}, None)
+
+# Field reference in calc_vars:
+# constant: "{weight}"  → uses already-aggregated 'weight' field value
 ```
 
 ---
 
-## 8. Non-Importable Field Types
+## 9. Non-Importable Field Types
 
 These REDCap field types are automatically disabled:
+
 - `calc` (calculated fields)
 - `descriptive` (labels/instructions)
 - `file` (file uploads)
@@ -184,13 +250,13 @@ These REDCap field types are automatically disabled:
 
 ---
 
-## 9. Development Phases
+## 10. Development Phases
 
 | Phase | Goal | Dependencies |
 |-------|------|---------------|
 | 0 | Setup & infrastructure | – |
 | 1 | DataDict parser + template schema | Phase 0 |
-| 2 | Aggregation MVP + export | Phase 1 |
+| 2 | Transform pipeline (query → calc → aggregate → export) | Phase 1 |
 | 3 | Minimal UI (Template Builder) | Phase 2 |
 | 4 | Calculation engine + validation | Phase 3 |
 | 5 | Data Processor UI | Phase 4 |
@@ -199,12 +265,11 @@ These REDCap field types are automatically disabled:
 
 ---
 
-## 10. Tech Stack
+## 11. Tech Stack
 
-- **UI:** Flet (Flutter for Python)
+- **UI:** Flet 0.80.1 (Flutter for Python)
 - **Backend:** Python 3.11+, Pandas, Pydantic
 - **Expression Eval:** simpleeval
 - **Config:** YAML (PyYAML)
 - **Testing:** pytest
 - **Packaging:** PyInstaller or Flet Build
-```

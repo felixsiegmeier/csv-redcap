@@ -19,6 +19,8 @@ class AggregationMethod(str, Enum):
     MODE = "mode" # most frequent value
     SUM = "sum"
     NEAREST = "nearest" # closest to reference timepoint
+    ANY = "any" # any value (for categorical fields)
+    COUNT = "count" # number of values present
 
 class ReferenceMode(str, Enum):
     CALENDAR_DAY = "calendar_day"
@@ -84,10 +86,9 @@ class Template(BaseModel):
     Complete template for mapping source data to REDCap format.
     Contains all necessary REDCap metadata and mapping logic.
     """
-    version: str = "1.0"
     name: str
-    datadict_hash: Optional[str] = None  # For validation against original DataDict
-    
+    description: Optional[str] = None
+
     # Global settings
     record_id_column: str = "record_id"  # Column name for patient/record ID
     arm: Optional[str] = None  # Fixed arm or null for runtime selection
@@ -133,3 +134,5 @@ class Template(BaseModel):
             record_id_column="record_id",
             fields=fields
         )
+
+    

@@ -1,0 +1,542 @@
+version: "1.0"
+name: "Comprehensive Example Template"
+description: "Template covering all use cases for transform.py development and testing"
+datadict_hash: null  # For validation against DataDict changes
+arm: null  # Will be set at runtime
+record_id_column: "Patienten-ID"  # Column name in source data for patient/record ID
+
+fields:
+  # ============================================================================
+  # USE CASE 1: Simple Demography - Direct mapping from PatientInfo
+  # ============================================================================
+  
+  - field_name: "weight"
+    form_name: "demography"
+    event_name: "baseline_arm_1"
+    source:
+      query_string: "parameter == 'Gewicht'"
+      query_value: "value"
+      timestamp: "timestamp"
+      aggregation: first  # Take first recorded value
+    
+  - field_name: "height"
+    form_name: "demography"
+    event_name: "baseline_arm_1"
+    source:
+      query_string: "parameter == 'Größe'"
+      query_value: "value"
+      timestamp: "timestamp"
+      aggregation: first
+  
+  - field_name: "birthdate"
+    form_name: "demography"
+    event_name: "baseline_arm_1"
+    source:
+      query_string: "parameter == 'Geburtsdatum'"
+      query_value: "value"
+      timestamp: "timestamp"
+      aggregation: first
+  
+  # ============================================================================
+  # USE CASE 2: Calculated field using field references
+  # ============================================================================
+  
+  - field_name: "bmi"
+    form_name: "demography"
+    event_name: "baseline_arm_1"
+    source:
+      calculation_expr: "{weight} * 10000 / ({height} * {height})"
+      calc_vars:
+        weight:
+          constant: "{weight}"  # Reference to already-processed field
+        height:
+          constant: "{height}"  # Reference to already-processed field
+      aggregation: first  # Apply after calculation
+  
+  # ============================================================================
+  # USE CASE 3: Time-series vitals with aggregation (repeating instrument)
+  # ============================================================================
+  
+  - field_name: "heart_rate"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "hour_instance"  # Auto-numbered by time interval
+    source:
+      query_string: "parameter == 'HF [min⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 1  # Aggregate per hour
+      reference: "calendar_day"
+      aggregation: mean
+      outlier_filter: null
+  
+  - field_name: "resp_rate"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "hour_instance"
+    source:
+      query_string: "parameter == 'AF [min⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 1
+      reference: "calendar_day"
+      aggregation: mean
+  
+  - field_name: "spo2"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "hour_instance"
+    source:
+      query_string: "parameter == 'SpO2 [%]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 1
+      reference: "calendar_day"
+      aggregation: mean
+  
+  # ============================================================================
+  # USE CASE 4: Lab values with different aggregation methods
+  # ============================================================================
+  
+  - field_name: "hb_min"
+    form_name: "lab_values"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "lab_values"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'HB (HGB) [g·dL⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24  # Daily aggregation
+      reference: "calendar_day"
+      aggregation: min  # Minimum hemoglobin
+  
+  - field_name: "hb_max"
+    form_name: "lab_values"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "lab_values"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'HB (HGB) [g·dL⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: max
+  
+  - field_name: "hb_mean"
+    form_name: "lab_values"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "lab_values"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'HB (HGB) [g·dL⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: mean
+  
+  - field_name: "leukocytes"
+    form_name: "lab_values"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "lab_values"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'Leukozyten [nL⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: median  # Robust average
+  
+  # ============================================================================
+  # USE CASE 5: Medication with rate calculation
+  # ============================================================================
+  
+  - field_name: "norepinephrine_dose"
+    form_name: "medications"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "medications"
+    repeat_instance: "hour_instance"
+    source:
+      query_string: "parameter.str.contains('Norepinephrin', case=False, na=False)"
+      query_value: "rate"
+      timestamp: "timestamp"
+      time_interval: 1
+      reference: "calendar_day"
+      calculation_expr: "({rate} * {conc}) / {weight} / 60 * 1000"  # Convert to µg/kg/min
+      calc_vars:
+        rate:
+          query_string: "parameter.str.contains('Norepinephrin', case=False, na=False)"
+          query_value: "rate"
+        conc:
+          constant: "0.1"  # 5mg/50ml = 0.1 mg/ml
+        weight:
+          constant: "{weight}"  # Reference to weight field
+      aggregation: mean
+  
+  - field_name: "propofol_dose"
+    form_name: "medications"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "medications"
+    repeat_instance: "hour_instance"
+    source:
+      query_string: "parameter.str.contains('Propofol', case=False, na=False)"
+      query_value: "rate"
+      timestamp: "timestamp"
+      time_interval: 1
+      reference: "calendar_day"
+      calculation_expr: "({rate} * 20) / {weight}"  # Convert to mg/kg/h
+      calc_vars:
+        rate:
+          query_string: "parameter.str.contains('Propofol', case=False, na=False)"
+          query_value: "rate"
+        weight:
+          constant: "{weight}"
+      aggregation: mean
+  
+  # ============================================================================
+  # USE CASE 6: Yes/No field using 'any' aggregation
+  # ============================================================================
+  
+  - field_name: "antibiotic_given"
+    form_name: "medications"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "medications"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter.str.contains('Flucloxacillin|Vancomycin|Meropenem', case=False, na=False, regex=True)"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: any  # Returns 1 if at least one match, else 0
+  
+  - field_name: "vasopressor_given"
+    form_name: "medications"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "medications"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter.str.contains('Norepinephrin|Epinephrin|Empressin', case=False, na=False, regex=True)"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: any
+  
+  # ============================================================================
+  # USE CASE 7: Count aggregation
+  # ============================================================================
+  
+  - field_name: "vital_measurements_count"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'HF [min⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: count
+  
+  # ============================================================================
+  # USE CASE 8: Sum aggregation (fluid balance)
+  # ============================================================================
+  
+  - field_name: "total_fluid_intake"
+    form_name: "fluid_balance"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "fluid_balance"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "category.str.contains('Einfuhr', case=False, na=False)"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: sum
+  
+  - field_name: "total_fluid_output"
+    form_name: "fluid_balance"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "fluid_balance"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "category.str.contains('Ausfuhr', case=False, na=False)"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: sum
+  
+  # ============================================================================
+  # USE CASE 9: Calculated field with fluid balance (field dependency)
+  # ============================================================================
+  
+  - field_name: "fluid_balance"
+    form_name: "fluid_balance"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "fluid_balance"
+    repeat_instance: "day_instance"
+    source:
+      calculation_expr: "{intake} - {output}"
+      calc_vars:
+        intake:
+          constant: "{total_fluid_intake}"  # Reference to previous field
+        output:
+          constant: "{total_fluid_output}"  # Reference to previous field
+      aggregation: first
+  
+  # ============================================================================
+  # USE CASE 10: First and Last values
+  # ============================================================================
+  
+  - field_name: "first_temperature"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'Zentrale Temp'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: first
+  
+  - field_name: "last_temperature"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'Zentrale Temp'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: last
+  
+  # ============================================================================
+  # USE CASE 11: Mode aggregation (most frequent categorical value)
+  # ============================================================================
+  
+  - field_name: "gcs_eyes_mode"
+    form_name: "neuro_assessment"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "neuro_assessment"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'Augen öffnen'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: mode  # Most frequent value
+  
+  # ============================================================================
+  # USE CASE 12: Complex conditional calculation
+  # ============================================================================
+  
+  - field_name: "shock_index"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "hour_instance"
+    source:
+      calculation_expr: "{hr} / {sbp} if {sbp} > 0 else None"
+      calc_vars:
+        hr:
+          query_string: "parameter == 'HF [min⁻¹]'"
+          query_value: "value"
+        sbp:
+          query_string: "parameter == 'RR sys [mmHg]'"
+          query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 1
+      reference: "calendar_day"
+      aggregation: mean
+  
+  # ============================================================================
+  # USE CASE 13: Nested calculation with multiple dependencies
+  # ============================================================================
+  
+  - field_name: "map"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "hour_instance"
+    source:
+      calculation_expr: "({sbp} + 2 * {dbp}) / 3"
+      calc_vars:
+        sbp:
+          query_string: "parameter == 'RR sys [mmHg]'"
+          query_value: "value"
+        dbp:
+          query_string: "parameter == 'RR dia [mmHg]'"
+          query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 1
+      reference: "calendar_day"
+      aggregation: mean
+  
+  # ============================================================================
+  # USE CASE 14: Categorical value mapping
+  # ============================================================================
+  
+  - field_name: "covid19_status"
+    form_name: "medical_history"
+    event_name: "baseline_arm_1"
+    source:
+      query_string: "parameter.str.contains('SARS-CoV-2', case=False, na=False)"
+      query_value: "value"
+      timestamp: "timestamp"
+      calculation_expr: "{'nicht nachweisba': 4, 'negativ': 4, 'positiv': 1}.get({result}, 3)"
+      calc_vars:
+        result:
+          query_string: "parameter.str.contains('SARS-CoV-2', case=False, na=False)"
+          query_value: "value"
+      aggregation: first
+  
+  # ============================================================================
+  # USE CASE 15: Binary outcome from threshold
+  # ============================================================================
+  
+  - field_name: "fever_detected"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'Zentrale Temp'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      calculation_expr: "1 if {temp} >= 38.0 else 0"
+      calc_vars:
+        temp:
+          query_string: "parameter == 'Zentrale Temp'"
+          query_value: "value"
+      aggregation: any  # 1 if fever detected at any point
+  
+  # ============================================================================
+  # USE CASE 16: Multiple time intervals (4-hour aggregation)
+  # ============================================================================
+  
+  - field_name: "hr_4h"
+    form_name: "vitals_4h"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals_4h"
+    repeat_instance: "fourhour_instance"
+    source:
+      query_string: "parameter == 'HF [min⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 4  # 4-hour blocks
+      reference: "calendar_day"
+      aggregation: mean
+  
+  # ============================================================================
+  # USE CASE 17: Outlier filtering
+  # ============================================================================
+  
+  - field_name: "hr_filtered"
+    form_name: "vitals"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "vitals"
+    repeat_instance: "hour_instance"
+    source:
+      query_string: "parameter == 'HF [min⁻¹]'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 1
+      reference: "calendar_day"
+      aggregation: mean
+      outlier_filter: 5  # Remove values > 95th or < 5th percentile
+  
+  # ============================================================================
+  # USE CASE 18: Complex medication dose calculation
+  # ============================================================================
+  
+  - field_name: "insulin_total_units"
+    form_name: "medications"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "medications"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter.str.contains('Huminsulin', case=False, na=False)"
+      query_value: "rate"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      calculation_expr: "{rate} * 24"  # Convert rate to total units per day
+      calc_vars:
+        rate:
+          query_string: "parameter.str.contains('Huminsulin', case=False, na=False)"
+          query_value: "rate"
+      aggregation: sum
+  
+  # ============================================================================
+  # USE CASE 19: Hemodynamic derived value
+  # ============================================================================
+  
+  - field_name: "cardiac_index"
+    form_name: "hemodynamics"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "hemodynamics"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'CI'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: mean
+  
+  - field_name: "cardiac_output"
+    form_name: "hemodynamics"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "hemodynamics"
+    repeat_instance: "day_instance"
+    source:
+      query_string: "parameter == 'HZV (l/min)'"
+      query_value: "value"
+      timestamp: "timestamp"
+      time_interval: 24
+      reference: "calendar_day"
+      aggregation: mean
+  
+  # ============================================================================
+  # USE CASE 20: Multi-step calculation with BSA
+  # ============================================================================
+  
+  - field_name: "bsa"
+    form_name: "demography"
+    event_name: "baseline_arm_1"
+    source:
+      query_string: "parameter == 'Körperoberfläche (BSA)'"
+      query_value: "value"
+      timestamp: "timestamp"
+      aggregation: first
+  
+  - field_name: "cardiac_output_calculated"
+    form_name: "hemodynamics"
+    event_name: "icu_stay_arm_1"
+    repeat_instrument: "hemodynamics"
+    repeat_instance: "day_instance"
+    source:
+      calculation_expr: "{ci} * {bsa}"
+      calc_vars:
+        ci:
+          constant: "{cardiac_index}"  # Reference to previous field
+        bsa:
+          constant: "{bsa}"  # Reference to demography field
+      aggregation: first

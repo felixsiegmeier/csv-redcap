@@ -3,7 +3,7 @@ name = "csv-redcap"
 version = "0.1.0"
 description = ""
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Flet developer", email = "you@example.com" }
 ]
@@ -23,4 +23,4 @@ company = "Flet"
 copyright = "Copyright (C) 2026 by Flet"
 
 [tool.flet.app]
-path = "src"
+path = ""
