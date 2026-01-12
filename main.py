@@ -1,6 +1,5 @@
-def main():
-    print("Hello, World!")
-
+import flet as ft
+from ui.template_builder import main as template_builder_main
 
 if __name__ == "__main__":
-    main()
+    ft.run(template_builder_main)
